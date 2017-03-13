@@ -150,7 +150,7 @@ class ConfluencePage2Dashboard():
             "-c", "--configfile",
             dest    = "configfile",
             default = self.conf['configfile'],
-            help    = "read configuration from filer")
+            help    = "read configuration from file")
         parser.add_option(
             "-q", "--quiet",
             action  = "store_false", dest="verbose", default=True,
