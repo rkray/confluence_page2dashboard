@@ -13,6 +13,12 @@ from   optparse import OptionParser
 from   datetime import datetime,date
 import json
 import sys # for eprint needed
+import re
+
+# for the usage of mako templates
+# http://docs.makotemplates.org/en/latest/
+from   mako.template import Template
+from   mako.runtime import Context
 
 # Third Party Libraries
 # sudo apt install python3-yaml
@@ -66,12 +72,16 @@ class ConfluencePage():
         self.content = data['body']['storage']['value']
         #pprint(data)
 
+
 # END of ConfluencePage class
 
 # primary script class
 class ConfluencePage2Dashboard():
+
+    ############################################################################
+    # setup the Object
     def __init__(self):
-        # defiune defaults here
+        # define defaults here
         self.conf=dict(
             verbose=False,
             configfile = (
@@ -81,7 +91,51 @@ class ConfluencePage2Dashboard():
             )
         )
 
+
+    ############################################################################
+    # Main function
     def run(self):
+        self.load_config()
+
+        # get the page related to the page_id
+        cpage=ConfluencePage(self.conf['base_url'], int(self.conf['page_id']))
+        self.pagetitle=cpage.title
+
+        # extract date from the first table
+        table_data=self.parse_html(cpage.content)
+        if(self.conf['verbose'] == True):
+            pprint(table_data)
+        
+        # load template from file
+        template = Template(
+            filename=self.conf['html_template_file'],
+        )
+
+        # render the html output
+        html = template.render(
+            title      = self.pagetitle,
+            timestamp  = datetime.now().strftime("%F %T"),
+            table_data = table_data
+        )
+
+        # write html output to file
+        html_file=open(self.conf['html_file'],"w")
+        html_file.write(html)
+        html_file.close()
+
+        # run the update command
+        try:
+            self.conf['update_command']
+        except:
+            if(self.conf['verbose'] == True):
+                pprint("no updated command available")
+        else:
+            os.system(self.conf['update_command'])
+
+
+    ############################################################################
+    # load configuration from file
+    def load_config(self):
         try:
             config = yaml.load(open(self.conf['configfile'], 'r'))
         except yaml.scanner.ScannerError as e:
@@ -97,24 +151,16 @@ class ConfluencePage2Dashboard():
         if (self.conf['verbose'] == True):
             pprint(self.conf)
 
-        # get the page related to the page_id
-        cpage=ConfluencePage(self.conf['base_url'], int(self.conf['page_id']))
-        if (self.conf['verbose'] == True):
-            self.pagetitle=cpage.title
 
-        # extract date from the first table
-        data=self.parse_html(cpage.content)
-        if(self.conf['verbose'] == True):
-            pprint(data)
-
+    ############################################################################
     # This function pare all the data from the first table.
     # Expected is a table with headerline and tbody.
     # Table cells must not combined.
     #
     # ToDo:
-    # This function is very static and should be rewriten. The column names shhould
-    # be configureable ovver the config file
-    # the function should be renamde to "parse_first_table" or something like
+    # This function is very static and should be rewriten. The column names
+    # should be configureable ovver the config file.
+    # The function should be renamde to "parse_first_table" or something like
     # that.
     # the functoin is also not very flexible if thee tbody or is missing or if
     # the table has no header line
@@ -123,25 +169,48 @@ class ConfluencePage2Dashboard():
         table = soup.find('table')
         table_body = table.find('tbody')
         rows = table_body.find_all('tr')
+        link_pattern=re.compile(
+            r'(.*)<ac:link>.*? content-title="(.*?)" .*?</ri:page>(.*)'
+        )
 
         data = []
         for row in rows[1:]:
             cols = row.find_all('td')
-            cols = [td_content.text.strip() for td_content in cols]
+
+            striped_cols=[]
+            for td_content in cols:
+                #<ac:link><ri:page ri:content-title="bookatiger.com" ri:space-key="hi"></ri:page>
+
+                # remove color parameter like
+                # <ac:parameter ac:name="colour">Yellow</ac:parameter>
+                [s.extract() for s in td_content('ac:parameter',attrs={"ac:name": "colour"})]
+
+                # Extract the content-title from ri:page element and add this string as
+                # text to element. Otherwise the strip function will not regard the text
+                for s in td_content('ri:page'):
+                    s.string=s['ri:content-title']
+                    
+                #print(str(td_content))
+
+                text=td_content.text.strip()
+                #print(text)
+                striped_cols.append(text)
+
             data.append(dict(
-                merchant         = cols[0],
-                portal           = cols[1],
-                payment_method   = cols[2],
-                mi               = cols[3],
-                sales            = cols[4],
-                est_pv           = cols[5],
-                est_go_live_date = cols[6],
-                state            = cols[7],
+                merchant         = striped_cols[0],
+                portal           = striped_cols[1],
+                payment_method   = striped_cols[2],
+                mi               = striped_cols[3],
+                sales            = striped_cols[4],
+                est_pv           = striped_cols[5],
+                est_go_live_date = striped_cols[6],
+                state            = striped_cols[7],
             ))
 
         return(data)
 
 
+    ############################################################################
     # evaluate commandline arguments and switches
     def get_arguments(self):
         parser = OptionParser()
